@@ -5,7 +5,7 @@ export type Message = SQS.Types.Message;
 export type MessageHandler = (message: Message) => Promise<void>;
 export type RemainingTimeFunction = () => number;
 
-interface QueueDrainerConstructorOptions {
+export interface QueueDrainerConstructorOptions {
   logger: Logger;
   sqs: SQS;
   queueUrl: string;
