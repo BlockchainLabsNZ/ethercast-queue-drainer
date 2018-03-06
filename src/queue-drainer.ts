@@ -1,5 +1,5 @@
-import { SQS } from 'aws-sdk';
 import * as Logger from 'bunyan';
+import * as SQS from 'aws-sdk/clients/sqs';
 
 export type Message = SQS.Types.Message;
 export type MessageHandler = (message: Message) => Promise<void>;
