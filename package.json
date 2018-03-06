@@ -1,6 +1,6 @@
 {
   "name": "@ethercast/queue-drainer",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "description": "a utility class for draining an sqs queue",
   "keywords": [],
   "main": "dist/lib/queue-drainer.js",
