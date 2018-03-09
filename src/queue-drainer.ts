@@ -3,14 +3,17 @@ import * as SQS from 'aws-sdk/clients/sqs';
 
 export type Message = SQS.Types.Message;
 export type MessageHandler = (message: Message) => Promise<void>;
-export type RemainingTimeFunction = () => number;
+export type ShouldContinueFunction = () => boolean;
+export type BatchSize = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10;
 
 export interface QueueDrainerConstructorOptions {
   logger: Logger;
   sqs: SQS;
   queueUrl: string;
   handleMessage: MessageHandler;
-  getRemainingTime: RemainingTimeFunction;
+  shouldContinue: ShouldContinueFunction;
+  batchSize?: BatchSize;
+  stopWhenEmpty?: boolean;
 }
 
 export default class QueueDrainer {
@@ -18,7 +21,10 @@ export default class QueueDrainer {
   private sqs: SQS;
   private queueUrl: string;
   private handleMessage: MessageHandler;
-  private getRemainingTime: RemainingTimeFunction;
+  private shouldContinue: ShouldContinueFunction;
+  private batchSize: BatchSize;
+  private stopWhenEmpty: boolean;
+
   private deleteMessages = async (messages: Message[]) => {
     if (messages.length === 0) {
       return;
@@ -48,6 +54,7 @@ export default class QueueDrainer {
 
     this.logger.debug({ messageCount: messages.length }, 'deleted messages');
   };
+
   private processMessages = async (messages: Message[]) => {
     this.logger.debug({ messageCount: messages.length }, `processing messages`);
 
@@ -56,20 +63,22 @@ export default class QueueDrainer {
     }
   };
 
-  constructor({ logger, sqs, queueUrl, handleMessage, getRemainingTime }: QueueDrainerConstructorOptions) {
+  constructor({ logger, sqs, queueUrl, handleMessage, shouldContinue, batchSize = 10, stopWhenEmpty = true }: QueueDrainerConstructorOptions) {
     this.logger = logger;
     this.sqs = sqs;
     this.queueUrl = queueUrl;
     this.handleMessage = handleMessage;
-    this.getRemainingTime = getRemainingTime;
+    this.shouldContinue = shouldContinue;
+    this.batchSize = batchSize;
+    this.stopWhenEmpty = stopWhenEmpty;
   }
 
   public async drain() {
     let processedMessageCount = 0;
     let pollCount = 0;
 
-    // while we have more than 3 seconds remaining
-    while (this.getRemainingTime() > 3000) {
+    // while we should continue
+    while (this.shouldContinue()) {
       if (pollCount % 5 === 0) {
         this.logger.info({ pollCount, processedMessageCount }, 'polling...');
       } else {
@@ -78,12 +87,12 @@ export default class QueueDrainer {
 
       const messages = await this.poll();
 
-      await this.processMessages(messages);
-
-      if (messages.length === 0) {
+      if (this.stopWhenEmpty && messages.length === 0) {
         this.logger.info({ processedMessageCount, pollCount }, 'queue is empty, ending drain');
         break;
       }
+
+      await this.processMessages(messages);
 
       await this.deleteMessages(messages);
 
@@ -91,18 +100,17 @@ export default class QueueDrainer {
       pollCount++;
     }
 
-    this.logger.debug({ processedMessageCount, pollCount }, 'finished draining queue');
+    this.logger.debug({ processedMessageCount, pollCount }, 'finished');
   }
 
-  private async poll(numMessages: number = 10): Promise<Message[]> {
+  private async poll(): Promise<Message[]> {
     const { Messages } = await this.sqs.receiveMessage({
       QueueUrl: this.queueUrl,
-      MaxNumberOfMessages: numMessages,
+      MaxNumberOfMessages: this.batchSize,
       WaitTimeSeconds: 1
     }).promise();
 
     if (!Messages) {
-      this.logger.info('polling returned undefined messages');
       return [];
     }
 
