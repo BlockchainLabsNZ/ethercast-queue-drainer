@@ -14,6 +14,11 @@ export interface QueueDrainerConstructorOptions {
   shouldContinue: ShouldContinueFunction;
   batchSize?: BatchSize;
   stopWhenEmpty?: boolean;
+  waitTimeSeconds?: number;
+}
+
+async function sleep(ms: number): Promise<void> {
+  return new Promise<void>(resolve => setTimeout(resolve, ms));
 }
 
 export default class QueueDrainer {
@@ -24,6 +29,18 @@ export default class QueueDrainer {
   private shouldContinue: ShouldContinueFunction;
   private batchSize: BatchSize;
   private stopWhenEmpty: boolean;
+  private waitTimeSeconds: number;
+
+  public constructor({ logger, sqs, queueUrl, handleMessage, shouldContinue, batchSize = 10, stopWhenEmpty = true, waitTimeSeconds = 0 }: QueueDrainerConstructorOptions) {
+    this.logger = logger;
+    this.sqs = sqs;
+    this.queueUrl = queueUrl;
+    this.handleMessage = handleMessage;
+    this.shouldContinue = shouldContinue;
+    this.batchSize = batchSize;
+    this.stopWhenEmpty = stopWhenEmpty;
+    this.waitTimeSeconds = waitTimeSeconds;
+  }
 
   private deleteMessages = async (messages: Message[]) => {
     if (messages.length === 0) {
@@ -59,19 +76,9 @@ export default class QueueDrainer {
     this.logger.debug({ messageCount: messages.length }, `processing messages`);
 
     for (let i = 0; i < messages.length; i++) {
-      await this.handleMessage(messages[i]);
+      await this.handleMessage(messages[ i ]);
     }
   };
-
-  constructor({ logger, sqs, queueUrl, handleMessage, shouldContinue, batchSize = 10, stopWhenEmpty = true }: QueueDrainerConstructorOptions) {
-    this.logger = logger;
-    this.sqs = sqs;
-    this.queueUrl = queueUrl;
-    this.handleMessage = handleMessage;
-    this.shouldContinue = shouldContinue;
-    this.batchSize = batchSize;
-    this.stopWhenEmpty = stopWhenEmpty;
-  }
 
   public async drain() {
     let processedMessageCount = 0;
@@ -87,17 +94,22 @@ export default class QueueDrainer {
 
       const messages = await this.poll();
 
-      if (this.stopWhenEmpty && messages.length === 0) {
-        this.logger.info({ processedMessageCount, pollCount }, 'queue is empty, ending drain');
-        break;
-      }
-
-      await this.processMessages(messages);
-
-      await this.deleteMessages(messages);
-
       processedMessageCount += messages.length;
       pollCount++;
+
+      if (messages.length === 0) {
+        if (this.stopWhenEmpty) {
+          this.logger.info({ processedMessageCount, pollCount }, 'queue is empty, ending drain');
+          break;
+        } else {
+          this.logger.info('queue is empty, continuing');
+          await sleep(1000);
+        }
+      } else {
+        await this.processMessages(messages);
+
+        await this.deleteMessages(messages);
+      }
     }
 
     this.logger.debug({ processedMessageCount, pollCount }, 'finished');
@@ -107,7 +119,7 @@ export default class QueueDrainer {
     const { Messages } = await this.sqs.receiveMessage({
       QueueUrl: this.queueUrl,
       MaxNumberOfMessages: this.batchSize,
-      WaitTimeSeconds: 1
+      WaitTimeSeconds: this.waitTimeSeconds
     }).promise();
 
     if (!Messages) {
